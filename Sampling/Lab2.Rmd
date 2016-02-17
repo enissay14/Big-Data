@@ -1,0 +1,197 @@
+---
+title: "TP Echantillonnage pour le big data - Partie 2"
+author: "Yassine Landa"
+date: "January 19, 2016"
+output: pdf_document
+---
+
+##Partie 2 (données réelles):
+Pour contourner la limite liée au système de fichier ext4 sur ubuntu 15.10 j'utilise le package read.table qui permets de manipuler des grandes matrix avec R au lieu de bigmemory. (Ils sont presques equivalents)
+```{r}
+library(bigmemory)
+data <- read.big.matrix("CensusData.csv",header=TRUE,type="integer")
+
+library(data.table)  
+data <- fread("CensusData.csv",header=TRUE)
+N <-2664394
+P <- 102
+str(data)
+```
+0) Visiualisation des données en se limitant dans un premier temps à la réponse *WAGP* et aux variables *AGEP*, *COW*, *SCHL* et *WKHP* en utilisant 1% des données:
+```{r}
+
+# data.sub <- subset(data, select = c("WAGP","AGEP","COW","SCHL","WKHP") )
+data.sub <- read.csv2("data.sub1")
+data.sub <- subset(data.sub, select = -1)
+
+str(data.sub)
+N <-dim(data)[1]
+
+# set.seed(0)
+# idx <- sample(N, 0.01*N)
+# data.sub <- data[idx,]
+data.sub <- read.csv2("data.sub2")
+data.sub <- subset(data.sub, select = -1)
+
+#plotting
+par(mfrow=c(2,2))
+plot(data.sub$AGEP,data.sub$WAGP,xlab="AGEP",ylab="WAGP")
+plot(data.sub$COW,data.sub$WAGP,xlab="AGEP",ylab="WAGP")
+plot(data.sub$SCHL,data.sub$WAGP,xlab="SCHL",ylab="WAGP")
+plot(data.sub$WKHP,data.sub$WAGP,xlab="AGEP",ylab="WAGP")
+```
+La matrice de corrélation de Spearman pour 50 variables aléatoires: 
+```{r}
+
+#Selectionne 50 colonnes aléatoires  ( aesthetic reasons :) )
+selectedCols <- sample(names(data.sub), 50)
+temp2 <- subset(data.sub,select =  selectedCols)
+
+#Calcule les coefficients de correlation 
+descrCor_spear <- cor(scale(temp2,center=TRUE,scale=TRUE), method="spearman")
+
+#convertir les NAs à 0
+sum(is.na(descrCor_spear))
+descrCor_spear[is.na(descrCor_spear)] = 0
+
+library(corrplot)
+par(mfrow=c(1,1))
+corrplot(descrCor_spear, order = "hclust", type="lower", diag=FALSE, tl.cex=0.6, 
+         mar = c(0.4,0.4,0.4,0.4),)
+```
+Prétraitement des variables catégoriques, le prétraitement des variables est écrit en fonction pour qu'ils soit appliquer qu'au dataframe aec un nombre petit de variables (générés dans la question 3 par exemple):
+```{r}
+  #changing categorical data to factors
+ categorical.data <- c("RT","CIT","COW","DDRS","DEAR","DEYE","DOUT","DPHY","DRAT","DRATX","DREM","ENG","FER","GCL","GCM","GCR","HINS1","HINS2","HINS3","HINS4","HINS5","HINS6","HINS7","JWRIP","JWTR","LANX","MAR","MARHD","MARHT","MARHM","MARHW","MARHYP","MIG","MIL","MLPA","MLPB","MLPCD","MLPE","MLPFG","MLPH","MLPI","MLPJ","MLPK","NWAB","NWAV","NWLA","NWLK","NWRE","RELP","SCH","SCHG","SCHL","SEX","WKHP","WKL","WKW","WKR","YOEP","ANC","ANC1P","ANC2P","DECADE","DIS","DRIVESP","ESP","ESR","FOD1P","FOD2P","HICOV","HISP","INDP","JWAP","JWDP","LANP","MIGPUMA","MIGSP","MIGSP","NAICSP","NATIVITY","NOP","OC","OCCP","PAOC","PRIVCOV","PUBCOV","QTRBIR","RAC1P","RACAIAN","RACASN","RACBLK","RACNH","RACNUM","RACPI","RACSOR","RACWHT","RC","SCIENGP","SCIENGRLP","SFN","SFR","VPS","WAOB","FAGEP","FANCP","FCITP")
+  
+  pretraitementCat <- function(df){
+    idxCat <- which(names(df) %in% categorical.data)
+    df[,idxCat] <- factor(df[,idxCat])
+    df
+  }
+
+```
+
+1) Proposition de modèle linéaire, 10% des données sont considérées pour pouvoir calculer les coefficients de la régression sur ma machine (Intel 2.13Ghz x 2, 4Go de RAM ):
+```{r}
+# set.seed(0)
+# idx <- sample(N, 0.1*N)
+# data.sub <- data[idx,]
+
+wkhp <- data.sub$WKHP
+wkhp[which(is.na(wkhp))] <- 0 # NA: 0 hours worked
+
+wagp <- log(data.sub$WAGP+1e-8)
+cow <- factor(data.sub$COW, exclude = NULL)
+schl <- factor(data.sub$SCHL)
+sex <- factor(data.sub$SEX)
+
+res <- lm(WAGP~., data = data.frame(WAGP = wagp,
+ AGE = data.sub$AGEP,
+ COW = cow,
+ SCHL = schl,
+ SEX = sex,
+ WKHP = wkhp)) 
+
+summary(res)
+```
+2) Etude de la taille $n$ nécessaire pour obtenir des résultats comparables. Premièrement on commence par prendre un échantillon initiale de 50% des colonnes (hors notre target *WAGP*) et on choisit le meilleur modèle en terme du critère R2 en lançant plusieurs simulation avec un N = 10% et 20% et 30% de data.sub et un n de 10%, 20%, 30%, 40% et 50%.
+```{r}
+#setting up data sub
+N <-2664394
+P <- 102
+set.seed(0)
+N <- dim(data)[1]
+# idx <- sample(N, 0.1*N)
+# data.sub <- data[idx,]
+
+WAGP <- data.sub$WAGP
+data.sub <- subset(data.sub,select= -which(names(data.sub) == "WAGP"))
+idxP <- sample((P-1), 0.5*(P-1))
+data.sub <- subset(data.sub, select=idxP)
+data.sub <- cbind(WAGP, data.sub)
+P <- dim(data.sub)[2]
+
+#exp plan
+Numb <- dim(data.sub)[1]
+percentageN <- seq(0.1,0.3,0.1)
+percentagen <- seq(0.1,0.5,0.1) 
+p <- 5   #echantillon sur les variables
+nechantillon <- 5    #nombre de tirage
+
+sample.np <- function(S,n,p){
+  s <- S[sample(nrow(S),n),]  #row sample
+  if(ncol(S) == 2){
+    s <- s
+  }else{
+     s <- cbind(s[,1],s[,sample(2:ncol(S),p)])  #col sample   
+  }
+  s
+}
+
+#initiate result vector ( sd(coeff) , mean(R2), n , N)
+res3 <-matrix(0, nrow =length(percentagen) * length(percentageN), ncol = p + 4)
+k = 1
+for(i in 1:length(percentageN)){
+  Ntemp<- percentageN[i]*Numb
+  idxR <- sample(Numb, Ntemp)
+  df <- data.sub[idxR,]
+  for(j in 1:length(percentagen)){
+      numb <- percentagen[j]*Ntemp
+      coeff <- matrix(0,nrow = nechantillon, ncol = p+2)
+      for(l in 1:nechantillon){
+        echant <- sample.np(df,numb,p)
+        echant <- pretraitementCat(echant)
+        y <- echant[,1]
+        x <- echant[,-1]
+        reglin <- lm(y~as.matrix(x))
+        coeff[l,1:(p+1)] <- reglin$coefficients
+        coeff[l,(p+2)] <- summary(reglin)$r.squared
+      }   
+      res3[k,1:(p+1)] <- apply(coeff[,1:(p+1)],2,sd)
+      res3[k,(p+2)] <- mean(coeff[,(p+2)])
+      res3[k,(p+3)] <- percentagen[j]
+      res3[k,(p+4)] <- Ntemp
+      k <- k + 1
+  }
+}
+
+#resulat
+cat("le meilleur modèle en utilisant le critère R2 en prenant \n ",p," colonnes de P = ",P," s'obtient en prenant un échantillon\n de ",res3[which(res3[,(p+2)] == max(res3[,(p+2)])),(p+3)]*100,"% des lignes avec \nN = ",res3[which(res3[,(p+2)] == max(res3[,(p+2)])),(p+4)])
+```
+On répète cette fois avec p = 10
+```{r}
+p <- 10  #echantillon sur les variables
+
+#initiate result vector ( sd(coeff) , mean(R2), n , N)
+res3 <-matrix(0, nrow =length(percentagen) * length(percentageN), ncol = p + 4)
+k = 1
+for(i in 1:length(percentageN)){
+  Ntemp<- percentageN[i]*Numb
+  idxR <- sample(Numb, Ntemp)
+  df <- data.sub[idxR,]
+  for(j in 1:length(percentagen)){
+      numb <- percentagen[j]*Ntemp
+      coeff <- matrix(0,nrow = nechantillon, ncol = p+2)
+      for(l in 1:nechantillon){
+        echant <- sample.np(df,numb,p)
+        echant <- pretraitementCat(echant)
+        y <- echant[,1]
+        x <- echant[,-1]
+        reglin <- lm(y~as.matrix(x))
+        coeff[l,1:(p+1)] <- reglin$coefficients
+        coeff[l,(p+2)] <- summary(reglin)$r.squared
+      }   
+      res3[k,1:(p+1)] <- apply(coeff[,1:(p+1)],2,sd)
+      res3[k,(p+2)] <- mean(coeff[,(p+2)])
+      res3[k,(p+3)] <- percentagen[j]
+      res3[k,(p+4)] <- Ntemp
+      k <- k + 1
+  }
+}
+
+#resulat
+cat("le meilleur modèle en utilisant le critère R2 en prenant \n ",p," colonnes de P = ",P," s'obtient en prenant un échantillon\n de ",res3[which(res3[,(p+2)] == max(res3[,(p+2)])),(p+3)]*100,"% des lignes avec \nN = ",res3[which(res3[,(p+2)] == max(res3[,(p+2)])),(p+4)])
+```
+
+
